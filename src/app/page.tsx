@@ -3,9 +3,17 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Chess, Square, PieceSymbol, Color } from 'chess.js';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 type BoardRepresentation = ({ type: PieceSymbol; color: Color; square: Square } | null)[][];
+
+interface Particle {
+  id: number;
+  tx: number; // Target X offset
+  ty: number; // Target Y offset
+  rotate: number; // Random rotation angle
+  size: number; // Random piece size
+}
 
 export default function WizardChess() {
   const [game, setGame] = useState<Chess | null>(null);
@@ -13,9 +21,11 @@ export default function WizardChess() {
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
   const [possibleMoves, setPossibleMoves] = useState<string[]>([]);
   const [gameStatus, setGameStatus] = useState<string>('White to move');
-  
-  // Persistent piece identity tracking map for Framer Motion
   const [pieceIds, setPieceIds] = useState<Record<string, string>>({});
+
+  // Combat Animation States
+  const [shatterSquare, setShatterSquare] = useState<Square | null>(null);
+  const [particles, setParticles] = useState<Particle[]>([]);
 
   // Voice States
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -28,7 +38,6 @@ export default function WizardChess() {
     setGame(chessInstance);
     setBoard(chessInstance.board());
 
-    // Generate unique structural IDs for pieces based on initial layout positions
     const initialIds: Record<string, string> = {};
     const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
     chessInstance.board().forEach((row, rowIndex) => {
@@ -41,7 +50,6 @@ export default function WizardChess() {
     });
     setPieceIds(initialIds);
 
-    // Voice recognition setup
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
@@ -70,17 +78,45 @@ export default function WizardChess() {
 
   if (!game) return <div className="min-h-screen bg-neutral-950 flex items-center justify-center text-neutral-400">Loading Chamber...</div>;
 
-  // Unified State Synchronization & Animation Handler
+  // Triggers the tactical stone particle explosion
+  const triggerShatterBlast = (targetSquare: Square) => {
+    setShatterSquare(targetSquare);
+    
+    // Generate 12 distinct stone fragments shooting outward dynamically
+    const generatedParticles = Array.from({ length: 12 }).map((_, i) => {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = 40 + Math.random() * 80; // Distance traveled in pixels
+      return {
+        id: i,
+        tx: Math.cos(angle) * distance,
+        ty: Math.sin(angle) * distance,
+        rotate: Math.random() * 360,
+        size: 4 + Math.random() * 8, // Varying fragment dimensions
+      };
+    });
+
+    setParticles(generatedParticles);
+
+    // Clear particle container after completion
+    setTimeout(() => {
+      setShatterSquare(null);
+      setParticles([]);
+    }, 600);
+  };
+
   const handlePostMoveUpdates = (move: any) => {
+    // Audit if a capture took place
+    if (move.captured) {
+      triggerShatterBlast(move.to);
+    }
+
     setPieceIds((prev) => {
       const next = { ...prev };
       const movingPieceId = next[move.from];
       
-      // Move tracking identity from old coordinates to new coordinates
       delete next[move.from];
       next[move.to] = movingPieceId;
 
-      // Handle Castling visual tracking adjustments
       if (move.flags.includes('k')) {
         const rFrom = move.color === 'w' ? 'h1' : 'h8';
         const rTo = move.color === 'w' ? 'f1' : 'f8';
@@ -93,7 +129,6 @@ export default function WizardChess() {
         delete next[rFrom];
       }
       
-      // Handle En Passant entity deletions
       if (move.flags.includes('e')) {
         const epSquare = `${move.to[0]}${move.from[1]}`;
         delete next[epSquare];
@@ -101,7 +136,6 @@ export default function WizardChess() {
       return next;
     });
 
-    // Refresh display matrix data states
     setBoard(game.board());
     setSelectedSquare(null);
     setPossibleMoves([]);
@@ -154,7 +188,6 @@ export default function WizardChess() {
       const move = currentGame.move(sanMove);
       if (move) handlePostMoveUpdates(move);
     } catch (err) {
-      // Advanced fallback coordinate evaluation handler
       const validMoves = currentGame.moves({ verbose: true });
       const matchingMove = validMoves.find(
         (m) => m.piece === (piecePrefix || 'p').toLowerCase() && m.to === targetSquare && m.color === currentGame.turn()
@@ -199,7 +232,7 @@ export default function WizardChess() {
           <p className="text-sm font-mono tracking-wider text-amber-600/80">{gameStatus}</p>
         </header>
 
-        {/* Voice Control Hub */}
+        {/* Voice Hub */}
         <div className="w-full max-w-md bg-neutral-900/30 border border-neutral-800/60 rounded p-4 flex flex-col items-center gap-3 text-center">
           <button
             onClick={toggleListening}
@@ -215,7 +248,7 @@ export default function WizardChess() {
           {voiceError && <p className="text-xs font-mono text-red-500/90">{voiceError}</p>}
         </div>
 
-        {/* Board Container */}
+        {/* Board */}
         <div className="border border-neutral-800/80 p-3 bg-neutral-900/40 rounded shadow-2xl backdrop-blur-sm">
           <div className="grid grid-cols-8 border border-neutral-900">
             {board.map((row, rowIndex) =>
@@ -227,9 +260,8 @@ export default function WizardChess() {
                 const isDark = (rowIndex + colIndex) % 2 === 1;
                 const isSelected = selectedSquare === squareCoord;
                 const isHighlightedDestination = possibleMoves.includes(squareCoord);
-                
-                // Fetch the persistent animation ID mapped to this coordinate position
                 const activePieceId = pieceIds[squareCoord];
+                const isExploding = shatterSquare === squareCoord;
 
                 return (
                   <button
@@ -246,19 +278,44 @@ export default function WizardChess() {
                       <span className="absolute w-3 h-3 rounded-full bg-amber-600/50 pointer-events-none z-20" />
                     )}
                     
+                    {/* Render standard moving pieces */}
                     {piece && activePieceId && (
                       <motion.span
                         layoutId={activePieceId}
-                        transition={{
-                          type: 'spring',
-                          stiffness: 140,
-                          damping: 18,
-                        }}
+                        transition={{ type: 'spring', stiffness: 140, damping: 18 }}
                         className="transform select-none block z-10 pointer-events-none"
                       >
                         {getUnicodePiece(piece.type, piece.color)}
                       </motion.span>
                     )}
+
+                    {/* Particle Explosion Layer */}
+                    <AnimatePresence>
+                      {isExploding && (
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+                          {particles.map((particle) => (
+                            <motion.div
+                              key={particle.id}
+                              initial={{ x: 0, y: 0, opacity: 1, scale: 1 }}
+                              animate={{
+                                x: particle.tx,
+                                y: particle.ty,
+                                opacity: 0,
+                                scale: 0.2,
+                                rotate: particle.rotate,
+                              }}
+                              exit={{ opacity: 0 }}
+                              transition={{ duration: 0.55, ease: 'easeOut' }}
+                              className="absolute bg-neutral-500 rounded-sm"
+                              style={{
+                                width: particle.size,
+                                height: particle.size,
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </AnimatePresence>
                   </button>
                 );
               })
