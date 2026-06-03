@@ -9,10 +9,10 @@ type BoardRepresentation = ({ type: PieceSymbol; color: Color; square: Square } 
 
 interface Particle {
   id: number;
-  tx: number; // Target X offset
-  ty: number; // Target Y offset
-  rotate: number; // Random rotation angle
-  size: number; // Random piece size
+  tx: number;
+  ty: number;
+  rotate: number;
+  size: number;
 }
 
 export default function WizardChess() {
@@ -23,7 +23,7 @@ export default function WizardChess() {
   const [gameStatus, setGameStatus] = useState<string>('White to move');
   const [pieceIds, setPieceIds] = useState<Record<string, string>>({});
 
-  // Combat Animation States
+  // Combat Particle States
   const [shatterSquare, setShatterSquare] = useState<Square | null>(null);
   const [particles, setParticles] = useState<Particle[]>([]);
 
@@ -33,10 +33,22 @@ export default function WizardChess() {
   const [voiceError, setVoiceError] = useState<string>('');
   const recognitionRef = useRef<any>(null);
 
+  // Audio Reference Streams (Prevents SSR execution breaks)
+  const moveAudioRef = useRef<HTMLAudioElement | null>(null);
+  const captureAudioRef = useRef<HTMLAudioElement | null>(null);
+
   useEffect(() => {
     const chessInstance = new Chess();
     setGame(chessInstance);
     setBoard(chessInstance.board());
+
+    // Initialize Audio Channels securely on the Client side
+    moveAudioRef.current = new Audio('/sounds/move.mp3');
+    captureAudioRef.current = new Audio('/sounds/capture.mp3');
+    
+    // Optimize performance by pre-loading audio buffers over the pipeline
+    moveAudioRef.current.load();
+    captureAudioRef.current.load();
 
     const initialIds: Record<string, string> = {};
     const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -78,26 +90,32 @@ export default function WizardChess() {
 
   if (!game) return <div className="min-h-screen bg-neutral-950 flex items-center justify-center text-neutral-400">Loading Chamber...</div>;
 
-  // Triggers the tactical stone particle explosion
+  // Plays specific audio clips cleanly, resetting overlapping tracks
+  const playSoundEffect = (audioRef: React.RefObject<HTMLAudioElement | null>) => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0; // Rewind track if rapidly fired
+      audioRef.current.play().catch((err) => console.log('Audio playback context waiting for interaction.', err));
+    }
+  };
+
   const triggerShatterBlast = (targetSquare: Square) => {
     setShatterSquare(targetSquare);
-    
-    // Generate 12 distinct stone fragments shooting outward dynamically
+    playSoundEffect(captureAudioRef); // Fire brutal smashing noise on impact
+
     const generatedParticles = Array.from({ length: 12 }).map((_, i) => {
       const angle = Math.random() * Math.PI * 2;
-      const distance = 40 + Math.random() * 80; // Distance traveled in pixels
+      const distance = 40 + Math.random() * 80;
       return {
         id: i,
         tx: Math.cos(angle) * distance,
         ty: Math.sin(angle) * distance,
         rotate: Math.random() * 360,
-        size: 4 + Math.random() * 8, // Varying fragment dimensions
+        size: 4 + Math.random() * 8,
       };
     });
 
     setParticles(generatedParticles);
 
-    // Clear particle container after completion
     setTimeout(() => {
       setShatterSquare(null);
       setParticles([]);
@@ -105,9 +123,10 @@ export default function WizardChess() {
   };
 
   const handlePostMoveUpdates = (move: any) => {
-    // Audit if a capture took place
     if (move.captured) {
       triggerShatterBlast(move.to);
+    } else {
+      playSoundEffect(moveAudioRef); // Fire stone-drag movement track
     }
 
     setPieceIds((prev) => {
@@ -232,7 +251,7 @@ export default function WizardChess() {
           <p className="text-sm font-mono tracking-wider text-amber-600/80">{gameStatus}</p>
         </header>
 
-        {/* Voice Hub */}
+        {/* Voice Control Hub */}
         <div className="w-full max-w-md bg-neutral-900/30 border border-neutral-800/60 rounded p-4 flex flex-col items-center gap-3 text-center">
           <button
             onClick={toggleListening}
@@ -248,7 +267,7 @@ export default function WizardChess() {
           {voiceError && <p className="text-xs font-mono text-red-500/90">{voiceError}</p>}
         </div>
 
-        {/* Board */}
+        {/* Board Container */}
         <div className="border border-neutral-800/80 p-3 bg-neutral-900/40 rounded shadow-2xl backdrop-blur-sm">
           <div className="grid grid-cols-8 border border-neutral-900">
             {board.map((row, rowIndex) =>
@@ -278,7 +297,6 @@ export default function WizardChess() {
                       <span className="absolute w-3 h-3 rounded-full bg-amber-600/50 pointer-events-none z-20" />
                     )}
                     
-                    {/* Render standard moving pieces */}
                     {piece && activePieceId && (
                       <motion.span
                         layoutId={activePieceId}
@@ -289,7 +307,6 @@ export default function WizardChess() {
                       </motion.span>
                     )}
 
-                    {/* Particle Explosion Layer */}
                     <AnimatePresence>
                       {isExploding && (
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
